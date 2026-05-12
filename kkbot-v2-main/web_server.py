@@ -402,7 +402,7 @@ def _dt(value: str | None) -> Optional[datetime]:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value))
+        return datetime.fromisoformat(str(value)).replace(tzinfo=None)
     except Exception:
         return None
 
