@@ -432,22 +432,27 @@ def _planned_for_shift(r: Any) -> Optional[Any]:
     )
 
 
-def _punctuality(r: Any) -> dict[str, Any]:
-    planned = _planned_for_shift(r)
-    start = _dt(r["start_at"])
-    if not planned or not start or not planned["start_time"]:
-        return {"kind":"unknown","label":"Rejasiz","minutes":0,"class":"blue","planned_start":"—","planned_end":"—"}
+def _punctuality_from_plan(shift_row: Any, planned_row: Optional[Any]) -> dict[str, Any]:
+    """Calculates punctuality for a given shift by comparing it with a pre-fetched plan."""
+    start = _dt(shift_row["start_at"])
+    if not planned_row or not start or not planned_row["start_time"]:
+        return {"kind": "unknown", "label": "Rejasiz", "minutes": 0, "class": "blue", "planned_start": "—", "planned_end": "—"}
     try:
-        planned_start = datetime.combine(parse_date(planned["work_date"]) or start.date(), datetime.strptime(planned["start_time"], "%H:%M").time())
-        diff = int((start.replace(tzinfo=None) - planned_start).total_seconds() // 60)
-        if diff > 5:
-            return {"kind":"late","label":f"Kechikdi {diff}m","minutes":diff,"class":"red","planned_start":planned["start_time"],"planned_end":planned["end_time"]}
-        if diff < -5:
-            return {"kind":"early","label":f"Erta {abs(diff)}m","minutes":abs(diff),"class":"amber","planned_start":planned["start_time"],"planned_end":planned["end_time"]}
-        return {"kind":"ontime","label":"Vaqtida","minutes":0,"class":"green","planned_start":planned["start_time"],"planned_end":planned["end_time"]}
+        planned_start_dt = datetime.combine(parse_date(planned_row["work_date"]) or start.date(), datetime.strptime(planned_row["start_time"], "%H:%M").time())
+        diff_minutes = int((start.replace(tzinfo=None) - planned_start_dt).total_seconds() // 60)
+        label_map = {"planned_start": planned_row["start_time"], "planned_end": planned_row["end_time"]}
+        if diff_minutes > 5:
+            return {"kind": "late", "label": f"Kechikdi {diff_minutes}m", "minutes": diff_minutes, "class": "red", **label_map}
+        if diff_minutes < -5:
+            return {"kind": "early", "label": f"Erta {abs(diff_minutes)}m", "minutes": abs(diff_minutes), "class": "amber", **label_map}
+        return {"kind": "ontime", "label": "Vaqtida", "minutes": 0, "class": "green", **label_map}
     except Exception:
-        return {"kind":"unknown","label":"Reja xato","minutes":0,"class":"blue","planned_start":planned["start_time"],"planned_end":planned["end_time"]}
+        return {"kind": "unknown", "label": "Reja xato", "minutes": 0, "class": "blue", "planned_start": planned_row.get("start_time", "xato"), "planned_end": planned_row.get("end_time", "xato")}
 
+def _punctuality(r: Any) -> dict[str, Any]:
+    """Legacy wrapper for punctuality calculation. Makes a DB call for each shift."""
+    planned = _planned_for_shift(r)
+    return _punctuality_from_plan(r, planned)
 
 def _dashboard_payload() -> dict[str, Any]:
     n = now_tz()
@@ -459,6 +464,24 @@ def _dashboard_payload() -> dict[str, Any]:
     rates = _rate_map()
     open_rows = db._execute("SELECT * FROM shifts WHERE company_id=? AND status='open' ORDER BY start_at ASC", (cid,), "all")
     closed_today = db._execute("SELECT * FROM shifts WHERE company_id=? AND business_date=? AND status='closed'", (cid, today.isoformat()), "all")
+    # --- OPTIMIZATION: Pre-fetch all schedule plans for today to avoid N+1 queries ---
+    plans_for_today = {}
+    if closed_today:
+        tids_for_today = {str(r['telegram_id']) for r in closed_today}
+        if tids_for_today:
+            # Fetch all schedule entries for these users for today in a single query
+            plan_rows = db._execute(
+                f"""
+                SELECT * FROM schedules
+                WHERE company_id=? AND work_date=? AND kind='shift' AND telegram_id IN ({','.join('?' for _ in tids_for_today)})
+                """,
+                (cid, today.isoformat(), *tids_for_today),
+                "all"
+            )
+            # Create a lookup map: telegram_id -> plan_row
+            for p_row in plan_rows:
+                plans_for_today[str(p_row['telegram_id'])] = p_row
+    # --- END OPTIMIZATION ---
     month_row = db._execute("SELECT COALESCE(SUM(worked_minutes),0) AS paid, COUNT(*) AS c FROM shifts WHERE company_id=? AND business_date>=?", (cid, month_start.isoformat()), "one")
     month_closed = db._execute("SELECT * FROM shifts WHERE company_id=? AND business_date>=? AND status='closed'", (cid, month_start.isoformat()), "all")
     raw_month = sum(_raw_minutes_for_row(r) for r in month_closed)
@@ -477,7 +500,8 @@ def _dashboard_payload() -> dict[str, Any]:
         })
     p_counts = {"ontime":0,"late":0,"early":0,"unknown":0}
     for r in closed_today:
-        p = _punctuality(r)
+        # Use the optimized function with pre-fetched plan
+        p = _punctuality_from_plan(r, plans_for_today.get(str(r["telegram_id"])))
         p_counts[p["kind"]] = p_counts.get(p["kind"], 0) + 1
     recent = []
     recent_rows = db._execute("SELECT * FROM shifts WHERE company_id=? ORDER BY start_at DESC LIMIT 16", (cid,), "all")
