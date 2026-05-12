@@ -34,7 +34,10 @@ app = FastAPI(title=APP_TITLE)
 # Core helpers
 # -----------------------------
 def now_tz() -> datetime:
-    return datetime.now(config.get_timezone_obj())
+    # IMPORTANT: the web dashboard parses DB datetimes as local naive values
+    # (see _dt below). Return local naive time here too, otherwise Python
+    # crashes when subtracting aware now_tz() from naive start_at.
+    return datetime.now(config.get_timezone_obj()).replace(tzinfo=None)
 
 
 def esc(v: Any) -> str:
