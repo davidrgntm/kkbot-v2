@@ -1,0 +1,14 @@
+aiogram==3.15.0
+pydantic-settings==2.6.1
+python-dotenv==1.0.1
+gspread-asyncio==2.0.0
+google-auth==2.36.0
+pandas==2.2.3
+matplotlib==3.9.2
+reportlab==4.2.5
+pytz==2024.2
+openpyxl
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+python-multipart==0.0.20
+Pillow==10.4.0
