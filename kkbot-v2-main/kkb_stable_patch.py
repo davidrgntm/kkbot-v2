@@ -130,6 +130,10 @@ def raw_minutes(row) -> int:
         e = ws.now_tz()
     if not s or not e:
         return 0
+    # Eski/manual yozuvlarda tungi smena end_at bir xil sanada 03:00 bo‘lib qolgan.
+    # 17:00 -> 03:00 ni 10 soat deb hisoblash uchun end <= start bo‘lsa keyingi kunga o‘tkazamiz.
+    if e <= s:
+        e = e + timedelta(days=1)
     return max(0, int((e - s).total_seconds() // 60))
 
 

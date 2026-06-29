@@ -54,17 +54,41 @@ def _date_to_iso(d: date | str | None) -> str | None:
 def _time_to_minutes(time_str: str) -> int:
     h, m = map(int, str(time_str).strip().split(":"))
     total = h * 60 + m
-    # Bizning grafiklarda 00:00-02:00 odatda tungi smena oxiri sifatida keladi.
+    # Kechki smenalar jadvalida 00:00-07:59 ko‘pincha keyingi kun tugashidir.
+    # Bu funksiya eski compatibility uchun qoldirildi. Hisob-kitoblarda pastdagi
+    # _minutes_between_times ishlatiladi, chunki 07:00 -> 16:00 ham to‘g‘ri sanalishi kerak.
     if h < 8:
         total += 24 * 60
     return total
 
 
-def _hours_between(start: str, end: str) -> float:
+def _plain_time_to_minutes(time_str: str) -> int:
+    """HH:MM ni shu kun ichidagi minutga aylantiradi, 00:00 ni keyingi kun deb o‘ylamaydi."""
+    h, m = map(int, str(time_str).strip().split(":"))
+    return h * 60 + m
+
+
+def _is_overnight_shift(start: str, end: str) -> bool:
+    """17:00 -> 03:00 kabi smenani keyingi kunga o‘tgan deb belgilaydi."""
     try:
-        return max(0.0, (_time_to_minutes(end) - _time_to_minutes(start)) / 60)
+        return _plain_time_to_minutes(end) <= _plain_time_to_minutes(start)
     except Exception:
-        return 0.0
+        return False
+
+
+def _minutes_between_times(start: str, end: str) -> int:
+    try:
+        s = _plain_time_to_minutes(start)
+        e = _plain_time_to_minutes(end)
+        if e <= s:
+            e += 24 * 60
+        return max(0, e - s)
+    except Exception:
+        return 0
+
+
+def _hours_between(start: str, end: str) -> float:
+    return _minutes_between_times(start, end) / 60
 
 
 def _format_minutes(minutes: int) -> str:
@@ -95,16 +119,18 @@ def _legacy_paid_minutes_from_total(total_minutes: int) -> tuple[int, int]:
 def _legacy_paid_minutes_between(start_at: datetime, end_at: datetime) -> tuple[int, int, int]:
     start = _to_local_naive(start_at) or start_at.replace(tzinfo=None)
     end = _to_local_naive(end_at) or end_at.replace(tzinfo=None)
+    # Agar eski/manual yozuvda end_at bir xil sanada 00:00-07:59 bo‘lib qolgan bo‘lsa,
+    # uni keyingi kun deb hisoblaymiz. Masalan: 2026-06-28 17:00 -> 2026-06-28 03:00
+    # aslida 2026-06-29 03:00 bo‘lishi kerak.
+    if end <= start:
+        end = end + timedelta(days=1)
     raw_minutes = max(0, int((end - start).total_seconds() // 60))
     paid_minutes, break_minutes = _legacy_paid_minutes_from_total(raw_minutes)
     return raw_minutes, paid_minutes, break_minutes
 
 
 def _legacy_paid_minutes_from_times(start: str, end: str) -> tuple[int, int, int]:
-    try:
-        raw = max(0, _time_to_minutes(end) - _time_to_minutes(start))
-    except Exception:
-        raw = 0
+    raw = _minutes_between_times(start, end)
     paid, br = _legacy_paid_minutes_from_total(raw)
     return raw, paid, br
 
@@ -307,6 +333,43 @@ class AsyncSQLiteDB:
         self.conn.row_factory = sqlite3.Row
         self.lock = threading.RLock()
         self._init_db()
+        self._repair_overnight_zero_shifts()
+
+    def _repair_overnight_zero_shifts(self) -> int:
+        """Fix old/manual overnight rows where 17:00 -> 03:00 was saved as same date.
+
+        No rows are deleted. Only closed shifts with worked_minutes <= 0 are recalculated
+        when end_at is not later than start_at. This makes reports and salary correct even
+        for data already entered before this fix.
+        """
+        fixed = 0
+        try:
+            with self.lock:
+                rows = self.conn.execute(
+                    """
+                    SELECT id, start_at, end_at, worked_minutes, break_minutes
+                    FROM shifts
+                    WHERE end_at IS NOT NULL AND COALESCE(worked_minutes,0)<=0
+                    """
+                ).fetchall()
+                for r in rows:
+                    start = _to_local_naive(r["start_at"])
+                    end = _to_local_naive(r["end_at"])
+                    if not start or not end or end > start:
+                        continue
+                    raw, paid, br = _legacy_paid_minutes_between(start, end)
+                    if raw > 0 and paid > 0:
+                        self.conn.execute(
+                            "UPDATE shifts SET worked_minutes=?, break_minutes=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                            (paid, br, int(r["id"])),
+                        )
+                        fixed += 1
+                self.conn.commit()
+        except Exception as e:
+            logger.exception("overnight shift repair xato: %s", e)
+        if fixed:
+            logger.info("Overnight zero shifts repaired: %s", fixed)
+        return fixed
 
     @classmethod
     def get_instance(cls):
@@ -796,9 +859,14 @@ class AsyncSQLiteDB:
         live_paid_minutes = 0
         live_break_minutes = 0
         if r["end_at"]:
-            worked = _format_minutes(r["worked_minutes"] or 0)
             worked_minutes = int(r["worked_minutes"] or 0)
             break_minutes = int(r["break_minutes"] or 0)
+            # Eski xato yozuvlar: 17:00 -> 03:00 bir xil sana bilan saqlanganida
+            # worked_minutes 0 chiqib qolgan. Bunday yopiq smenani ko‘rsatishda
+            # qayta hisoblaymiz, DBdagi ma’lumotni o‘chirmaymiz.
+            if worked_minutes <= 0 and start_at and end_at:
+                _raw, worked_minutes, break_minutes = _legacy_paid_minutes_between(start_at, end_at)
+            worked = _format_minutes(worked_minutes)
         elif str(r["status"] or "") == "open":
             live_raw_minutes = max(0, int((_now_local_naive() - start_at).total_seconds() // 60))
             live_paid_minutes, live_break_minutes = _legacy_paid_minutes_from_total(live_raw_minutes)
@@ -855,7 +923,7 @@ class AsyncSQLiteDB:
                 start_at = _to_local_naive(shift["start_at"]) or datetime.fromisoformat(str(shift["start_at"]).split("+")[0])
                 end_date = start_at.date()
                 try:
-                    if _time_to_minutes(value) < _time_to_minutes(shift["start"]):
+                    if _is_overnight_shift(shift["start"], value):
                         end_date = end_date + timedelta(days=1)
                     end_dt = datetime.combine(end_date, datetime.strptime(value, "%H:%M").time())
                     raw, paid, br = _legacy_paid_minutes_between(start_at, end_dt)
@@ -1212,15 +1280,17 @@ class AsyncSQLiteDB:
                 break_minutes = 0
                 if end_s:
                     try:
-                        end_date = d + timedelta(days=1) if _time_to_minutes(end_s) < _time_to_minutes(start_s) else d
+                        end_date = d + timedelta(days=1) if _is_overnight_shift(start_s, end_s) else d
                         end_dt = datetime.combine(end_date, datetime.strptime(end_s, "%H:%M").time())
                         status = "closed"
+                        raw_minutes, calculated_paid, break_minutes = _legacy_paid_minutes_from_times(start_s, end_s)
                         if str(r.get("worked", "")).strip():
                             worked_minutes = int(_hours_from_worked(r.get("worked", ""), start_s, end_s) * 60)
-                            # Imported Google Sheets already stores old rounded text. Detect lunch only approximately.
-                            raw_minutes, _paid, break_minutes = _legacy_paid_minutes_from_times(start_s, end_s)
+                            # Agar importdagi worked 0 bo‘lib qolgan bo‘lsa, start/end bo‘yicha qayta hisoblaymiz.
+                            if worked_minutes <= 0 and raw_minutes > 0:
+                                worked_minutes = calculated_paid
                         else:
-                            raw_minutes, worked_minutes, break_minutes = _legacy_paid_minutes_from_times(start_s, end_s)
+                            worked_minutes = calculated_paid
                     except Exception:
                         end_dt = None
                 self.conn.execute(

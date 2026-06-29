@@ -77,6 +77,18 @@ def parse_dt_local(d: str, t: str) -> Optional[datetime]:
         return None
 
 
+def plain_time_minutes(value: str) -> int:
+    h, m = map(int, str(value).strip().split(":"))
+    return h * 60 + m
+
+
+def is_overnight_time_range(start: str, end: str) -> bool:
+    try:
+        return plain_time_minutes(end) <= plain_time_minutes(start)
+    except Exception:
+        return False
+
+
 def month_name(m: int) -> str:
     return {
         1: "Yanvar", 2: "Fevral", 3: "Mart", 4: "Aprel", 5: "May", 6: "Iyun",
@@ -107,6 +119,9 @@ def legacy_paid_minutes(start_at: datetime, end_at: datetime) -> tuple[int, int,
     # values with timezone (+05:00), while manually added rows are often naive.
     start = _dt(start_at) or start_at.replace(tzinfo=None)
     end = _dt(end_at) or end_at.replace(tzinfo=None)
+    # Fix overnight shifts saved with the same calendar date: 17:00 -> 03:00.
+    if end <= start:
+        end = end + timedelta(days=1)
     raw = max(0, int((end - start).total_seconds() // 60))
     paid, br = legacy_paid_minutes_from_total(raw)
     return raw, paid, br
@@ -452,6 +467,8 @@ def _raw_minutes_for_row(r: Any, end_at: Optional[datetime] = None) -> int:
         end = now_tz()
     if not start or not end:
         return 0
+    if end <= start:
+        end = end + timedelta(days=1)
     return max(0, int((end - start).total_seconds() // 60))
 
 
@@ -878,7 +895,7 @@ async def shift_add(request: Request, telegram_id: str = Form(...), shop: str = 
     paid = 0
     br = 0
     if end_time:
-        end_date = start_at.date() + timedelta(days=1) if _time_to_minutes(end_time) < _time_to_minutes(start_time) else start_at.date()
+        end_date = start_at.date() + timedelta(days=1) if is_overnight_time_range(start_time, end_time) else start_at.date()
         end_at = datetime.combine(end_date, datetime.strptime(end_time, "%H:%M").time())
         _, paid, br = legacy_paid_minutes(start_at, end_at)
         status = "closed"
@@ -917,7 +934,7 @@ async def shift_update(request: Request, shift_id: int, telegram_id: str = Form(
     paid = 0
     br = 0
     if end_time:
-        end_date = start_at.date() + timedelta(days=1) if _time_to_minutes(end_time) < _time_to_minutes(start_time) else start_at.date()
+        end_date = start_at.date() + timedelta(days=1) if is_overnight_time_range(start_time, end_time) else start_at.date()
         end_at = datetime.combine(end_date, datetime.strptime(end_time, "%H:%M").time())
         _, paid, br = legacy_paid_minutes(start_at, end_at)
         status = "closed"
