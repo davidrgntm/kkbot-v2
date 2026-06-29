@@ -272,49 +272,49 @@ CSS = """
 
 def nav(active: str, user: dict) -> str:
     admin = is_admin(user)
-    items = [("cabinet", "/cabinet", "👤 Kabinetim")]
+    items = [("cabinet", "/cabinet", "👤 Кабинет")]
     if admin:
         items += [
             ("dashboard", "/dashboard", "🏠 Dashboard"),
-            ("employees", "/employees", "👥 Xodimlar"),
-            ("shops", "/shops", "🏪 Shoplar"),
-            ("shifts", "/shifts", "🟢 Smenalar"),
-            ("schedule", "/schedule", "📅 Grafik"),
-            ("quick", "/quick-schedule", "⚡ Tez grafik"),
-            ("salary", "/salary", "💰 Oylik"),
-            ("requests", "/requests", "📝 Arizalar"),
-            ("inventory", "/inventory", "📦 Inventar"),
-            ("export", "/export", "📤 Export"),
+            ("employees", "/employees", "👥 Сотрудники"),
+            ("shops", "/shops", "🏪 Филиалы"),
+            ("shifts", "/shifts", "🟢 Смены"),
+            ("schedule", "/schedule", "📅 График"),
+            ("quick", "/quick-schedule", "⚡ Быстрый график"),
+            ("salary", "/salary", "💰 Зарплата"),
+            ("requests", "/requests", "📝 Заявки"),
+            ("inventory", "/inventory", "📦 Инвентарь"),
+            ("export", "/export", "📤 Экспорт"),
         ]
     else:
-        items += [("my_shifts", "/my-shifts", "🟢 Smenalarim"), ("my_schedule", "/my-schedule", "📅 Grafikim")]
+        items += [("my_shifts", "/my-shifts", "🟢 Мои смены"), ("my_schedule", "/my-schedule", "📅 Мой график")]
     links = "".join(f'<a class="{"active" if k == active else ""}" href="{h}">{lab}</a>' for k, h, lab in items)
     return f"""
     <aside class="side" id="sideNav">
       <div class="logo"><div class="logo-badge">K</div><div>KKB<br><span style="font-size:12px;color:#93c5fd;font-weight:700">Web Panel</span></div></div>
       <div style="margin-bottom:16px;color:#bfdbfe;font-size:14px">{esc(user.get('name'))}<br>{esc(user.get('role'))}</div>
       <nav class="nav">{links}</nav>
-      <form method="post" action="/logout" style="margin-top:22px"><button class="btn gray" style="width:100%">Chiqish</button></form>
+      <form method="post" action="/logout" style="margin-top:22px"><button class="btn gray" style="width:100%">Выйти</button></form>
     </aside>
     """
 
 
 def layout(request: Request, active: str, title: str, subtitle: str, content: str) -> HTMLResponse:
     user = current_user(request) or {"name": "", "role": ""}
-    mobile = f"""<div class="mobile-head"><b>KKB · {esc(title)}</b><button class="hamb" onclick="document.getElementById('sideNav').classList.toggle('open')">☰ Menu</button></div>"""
+    mobile = f"""<div class="mobile-head"><b>KKB · {esc(title)}</b><button class="hamb" onclick="document.getElementById('sideNav').classList.toggle('open')">☰ Меню</button></div>"""
     script = """
     <script>
     window.addEventListener('beforeunload',()=>sessionStorage.setItem('scrollY', String(window.scrollY||0)));
     window.addEventListener('load',()=>{const y=sessionStorage.getItem('scrollY'); if(y){setTimeout(()=>window.scrollTo(0, Number(y)),30)}});
     </script>
     """
-    return HTMLResponse(f"""<!doctype html><html lang="uz"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · {APP_TITLE}</title><style>{CSS}</style></head>
-    <body>{mobile}<div class="app">{nav(active, user)}<main class="main"><div class="top"><div><div class="h1">{esc(title)}</div><div class="sub">{subtitle}</div></div><button class="btn secondary" onclick="if(window.softRefresh)softRefresh();else location.reload()">Yangilash</button></div>{content}<div class="footer">DB: {esc(db.db_path)} · Company: {esc(db._current_cid())}</div></main></div>{script}</body></html>""")
+    return HTMLResponse(f"""<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · {APP_TITLE}</title><style>{CSS}</style></head>
+    <body>{mobile}<div class="app">{nav(active, user)}<main class="main"><div class="top"><div><div class="h1">{esc(title)}</div><div class="sub">{subtitle}</div></div><button class="btn secondary" onclick="if(window.softRefresh)softRefresh();else location.reload()">Обновить</button></div>{content}<div class="footer">DB: {esc(db.db_path)} · Company: {esc(db._current_cid())}</div></main></div>{script}</body></html>""")
 
 
 def table(headers: list[str], rows: str, empty_cols: int) -> str:
     th = "".join(f"<th>{esc(h)}</th>" for h in headers)
-    body = rows or f"<tr><td colspan='{empty_cols}'>Ma'lumot yo‘q</td></tr>"
+    body = rows or f"<tr><td colspan='{empty_cols}'>Нет данных</td></tr>"
     return f"<div class='table-wrap'><table class='table'><thead><tr>{th}</tr></thead><tbody>{body}</tbody></table></div>"
 
 
@@ -324,7 +324,7 @@ def staff_options(selected: str = "") -> str:
 
 
 def shop_options(selected: str = "", include_empty: bool = True) -> str:
-    opts = "<option value=''>Barcha shoplar</option>" if include_empty else ""
+    opts = "<option value=''>Все филиалы</option>" if include_empty else ""
     for sh in db._execute("SELECT name FROM shops WHERE company_id=? AND active=1 ORDER BY name", (db._current_cid(),), "all"):
         name = sh["name"]
         opts += f"<option value='{esc(name)}' {'selected' if name==selected else ''}>{esc(name)}</option>"
@@ -342,12 +342,12 @@ async def login_page(request: Request, error: str = "", sent: str = "", phone: s
     if error:
         alert = f"<div class='alert err'>{esc(error)}</div>"
     if sent:
-        alert = f"<div class='alert ok'>Kod Telegramga yuborildi. Kodni kiriting.</div>"
-    return HTMLResponse(f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Login · {APP_TITLE}</title><style>{CSS}</style></head>
-    <body class="login"><div class="login-card"><h1>KKB Web Panel</h1><p>Telefon raqamingizni kiriting. Kod Telegram bot orqali keladi.</p>{alert}
-    <form method="post" action="/login/request"><input name="phone" value="{esc(phone)}" placeholder="Telefon: +998..." required><button class="btn">Kod olish</button></form>
-    <form method="post" action="/login/verify"><input name="phone" value="{esc(phone)}" placeholder="Telefon" required style="margin-top:12px"><input name="code" placeholder="6 xonali kod" required style="margin-top:12px"><button class="btn">Kirish</button></form>
-    <details style="margin-top:18px"><summary>Admin parol bilan kirish</summary><form method="post" action="/login/password"><input type="password" name="password" placeholder="WEB_ADMIN_PASSWORD" style="margin-top:12px"><button class="btn gray">Admin kirish</button></form></details>
+        alert = f"<div class='alert ok'>Код отправлен в Telegram. Введите код.</div>"
+    return HTMLResponse(f"""<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Login · {APP_TITLE}</title><style>{CSS}</style></head>
+    <body class="login"><div class="login-card"><h1>KKB Web Panel</h1><p>Введите телефон. Код придёт через Telegram-бот.</p>{alert}
+    <form method="post" action="/login/request"><input name="phone" value="{esc(phone)}" placeholder="Телефон: +998..." required><button class="btn">Получить код</button></form>
+    <form method="post" action="/login/verify"><input name="phone" value="{esc(phone)}" placeholder="Телефон" required style="margin-top:12px"><input name="code" placeholder="6-значный код" required style="margin-top:12px"><button class="btn">Войти</button></form>
+    <details style="margin-top:18px"><summary>Вход по паролю администратора</summary><form method="post" action="/login/password"><input type="password" name="password" placeholder="WEB_ADMIN_PASSWORD" style="margin-top:12px"><button class="btn gray">Войти как админ</button></form></details>
     </div></body></html>""")
 
 
@@ -355,13 +355,13 @@ async def login_page(request: Request, error: str = "", sent: str = "", phone: s
 async def login_request(phone: str = Form(...)):
     user = find_user_by_phone_or_id(phone)
     if not user:
-        return redirect(f"/login?error={urllib.parse.quote('Telefon bazadan topilmadi. Сотрудники → Phone ustunini tekshiring.')}&phone={urllib.parse.quote(phone)}")
+        return redirect(f"/login?error={urllib.parse.quote('Телефон не найден в базе. Проверьте поле Phone у сотрудника.')}&phone={urllib.parse.quote(phone)}")
     tid = str(user["telegram_id"])
     code = create_otp(tid, str(user["phone"] or phone))
     try:
         await send_otp(tid, code)
     except Exception as e:
-        return redirect(f"/login?error={urllib.parse.quote('Telegramga kod yuborilmadi: ' + str(e))}&phone={urllib.parse.quote(phone)}")
+        return redirect(f"/login?error={urllib.parse.quote('Не удалось отправить код в Telegram: ' + str(e))}&phone={urllib.parse.quote(phone)}")
     return redirect(f"/login?sent=1&phone={urllib.parse.quote(phone)}")
 
 
@@ -369,7 +369,7 @@ async def login_request(phone: str = Form(...)):
 async def login_verify(phone: str = Form(...), code: str = Form(...)):
     user = find_user_by_phone_or_id(phone)
     if not user or not verify_otp(str(user["telegram_id"]), code):
-        return redirect(f"/login?error={urllib.parse.quote('Kod noto‘g‘ri yoki muddati tugagan')}&phone={urllib.parse.quote(phone)}")
+        return redirect(f"/login?error={urllib.parse.quote('Код неверный или срок действия истёк')}&phone={urllib.parse.quote(phone)}")
     role = str(user["role"] or "staff").lower()
     res = redirect("/dashboard" if role in {"admin", "manager", "super_admin"} else "/cabinet")
     res.set_cookie(SESSION_COOKIE, make_session(str(user["telegram_id"]), role), httponly=True, samesite="lax", max_age=SESSION_TTL)
@@ -380,7 +380,7 @@ async def login_verify(phone: str = Form(...), code: str = Form(...)):
 async def login_password(password: str = Form(...)):
     expected = os.getenv("WEB_ADMIN_PASSWORD") or os.getenv("WEB_PASSWORD") or (str(config.get_admin_ids()[0]) if config.get_admin_ids() else "admin")
     if not hmac.compare_digest(str(password), str(expected)):
-        return redirect("/login?error=Admin parol noto‘g‘ri")
+        return redirect("/login?error=" + urllib.parse.quote("Неверный пароль администратора"))
     res = redirect("/dashboard")
     res.set_cookie(SESSION_COOKIE, make_session("admin_password", "admin"), httponly=True, samesite="lax", max_age=SESSION_TTL)
     return res
@@ -433,9 +433,23 @@ def _dt(value: Any) -> Optional[datetime]:
         return None
 
 
+def _local_epoch_seconds(value: Any) -> int:
+    dt = _dt(value)
+    if not dt:
+        return 0
+    tz = config.get_timezone_obj()
+    try:
+        aware = tz.localize(dt) if getattr(dt, "tzinfo", None) is None and hasattr(tz, "localize") else dt.replace(tzinfo=tz)
+        return int(aware.timestamp())
+    except Exception:
+        return int(dt.timestamp())
+
+
 def _raw_minutes_for_row(r: Any, end_at: Optional[datetime] = None) -> int:
     start = _dt(r["start_at"])
     end = _dt(end_at) if end_at is not None else _dt(r["end_at"])
+    if not end and str(r["status"] or "") == "open":
+        end = now_tz()
     if not start or not end:
         return 0
     return max(0, int((end - start).total_seconds() // 60))
@@ -508,9 +522,11 @@ def _dashboard_payload() -> dict[str, Any]:
             for p_row in plan_rows:
                 plans_for_today[str(p_row['telegram_id'])] = p_row
     # --- END OPTIMIZATION ---
-    month_row = db._execute("SELECT COALESCE(SUM(worked_minutes),0) AS paid, COUNT(*) AS c FROM shifts WHERE company_id=? AND business_date>=?", (cid, month_start.isoformat()), "one")
+    month_row = db._execute("SELECT COALESCE(SUM(worked_minutes),0) AS paid, COUNT(*) AS c FROM shifts WHERE company_id=? AND business_date>=? AND status='closed'", (cid, month_start.isoformat()), "one")
     month_closed = db._execute("SELECT * FROM shifts WHERE company_id=? AND business_date>=? AND status='closed'", (cid, month_start.isoformat()), "all")
     raw_month = sum(_raw_minutes_for_row(r) for r in month_closed)
+    paid_month = int(month_row["paid"] or 0)
+    shift_month_count = int(month_row["c"] or 0)
     shop_online = {}
     open_list = []
     for r in open_rows:
@@ -518,10 +534,14 @@ def _dashboard_payload() -> dict[str, Any]:
         elapsed = max(0, int((n - start).total_seconds())) if start else 0
         paid_now, br = legacy_paid_minutes_from_total(elapsed // 60)
         rate = rates.get(str(r["telegram_id"]), 0)
+        if start and start.date() >= month_start:
+            raw_month += elapsed // 60
+            paid_month += paid_now
+            shift_month_count += 1
         shop_online[r["shop"] or "—"] = shop_online.get(r["shop"] or "—", 0) + 1
         open_list.append({
             "id": r["id"], "name": r["name"], "shop": r["shop"], "start_at": r["start_at"],
-            "start_ts": int(start.timestamp()) if start else 0, "elapsed_seconds": elapsed,
+            "start_ts": _local_epoch_seconds(r["start_at"]), "elapsed_seconds": elapsed,
             "paid_minutes": paid_now, "raw_minutes": elapsed//60, "earned": round((paid_now/60)*rate), "rate": rate,
         })
     p_counts = {"ontime":0,"late":0,"early":0,"unknown":0}
@@ -534,6 +554,8 @@ def _dashboard_payload() -> dict[str, Any]:
     for r in recent_rows:
         raw = _raw_minutes_for_row(r)
         paid = int(r["worked_minutes"] or 0)
+        if str(r["status"] or "") == "open" and not r["end_at"]:
+            paid, _br_live = legacy_paid_minutes_from_total(raw)
         rate = rates.get(str(r["telegram_id"]), 0)
         p = _punctuality(r)
         recent.append({
@@ -544,7 +566,7 @@ def _dashboard_payload() -> dict[str, Any]:
         })
     return {
         "staff": int(staff_count or 0), "shops": int(shop_count or 0), "open": len(open_rows), "closed_today": len(closed_today),
-        "month_paid_minutes": int(month_row["paid"] or 0), "month_raw_minutes": int(raw_month), "month_shifts": int(month_row["c"] or 0),
+        "month_paid_minutes": int(paid_month), "month_raw_minutes": int(raw_month), "month_shifts": int(shift_month_count),
         "open_list": open_list, "shop_online": shop_online, "punctuality": p_counts, "recent": recent,
         "updated_at": n.strftime("%H:%M:%S"),
     }
@@ -556,7 +578,7 @@ def _chart_bars(data: dict[str, int], total: int | None = None) -> str:
     for k, v in data.items():
         pct = min(100, int((v / total) * 100)) if total else 0
         out += f"<div class='chart-row'><b>{esc(k)}</b><div class='bar'><i style='width:{pct}%'></i></div><span>{v}</span></div>"
-    return out or "<p class='sub'>Ma'lumot yo‘q</p>"
+    return out or "<p class='sub'>Нет данных</p>"
 
 
 def _render_dashboard(payload: dict[str, Any]) -> str:
@@ -618,7 +640,7 @@ async def cabinet(request: Request):
     if live.get("active"):
         live_text = f"Ishda: {esc(live.get('shop'))}, {esc(live.get('start'))}, hozircha {money(live.get('earned'))} so‘m"
     content = f"""
-    <div class="grid cards"><div class="card metric"><div class="label">Bu oy yozilgan</div><div class="value">{summary['hours']}</div><div class='hint'>pullik soat</div></div><div class="card metric"><div class="label">Bu oy real</div><div class="value">{round(raw_month/60,1)}</div><div class='hint'>fakt ishlagan vaqt</div></div><div class="card metric"><div class="label">Oylik</div><div class="value">{money(summary['earnings'])}</div></div><div class="card metric"><div class="label">Status</div><div class="value" style="font-size:18px">{live_text}</div></div></div>
+    <div class="grid cards"><div class="card metric"><div class="label">Bu oy yozilgan</div><div class="value">{summary['hours']}</div><div class='hint'>pullik soat</div></div><div class="card metric"><div class="label">Bu oy real</div><div class="value">{round(raw_month/60,1)}</div><div class='hint'>fakt ishlagan vaqt</div></div><div class="card metric"><div class="label">Зарплата</div><div class="value">{money(summary['earnings'])}</div></div><div class="card metric"><div class="label">Status</div><div class="value" style="font-size:18px">{live_text}</div></div></div>
     <div class="split"><div class="card"><div class='row'>{avatar_html}<div><h2>{esc(profile.get('name',''))}</h2><p>Rol: <b>{esc(profile.get('role'))}</b></p><p>Shop: <b>{esc(profile.get('shop') or '—')}</b></p><p>Stavka: <b>{money(profile.get('rate'))}</b> so‘m/soat</p></div></div><form method='post' enctype='multipart/form-data' action='/cabinet/avatar' class='form' style='margin-top:16px'><input class='input' type='file' name='avatar' accept='image/*'><button class='btn secondary'>Rasmni saqlash</button></form></div><div class="card"><h2>Ariza yuborish</h2><form class="grid" method="post" action="/requests/add"><select class="select" name="type"><option value="day_off">Dam olish</option><option value="vacation">Otpusk</option><option value="sick_leave">Bolnichniy</option><option value="other">Boshqa</option></select><textarea name="reason" rows="4" placeholder="Sabab"></textarea><button class="btn">Yuborish</button></form></div></div>
     <div class="card" style="margin-top:18px"><h2>Oxirgi smenalarim</h2>{table(['Sana','Shop','Keldi','Ketdi','Real','Yozildi'], rows, 6)}</div>
     """
@@ -715,9 +737,9 @@ async def employees(request: Request, q: str = ""):
     )
     content = f"""
     <div class="split"><div class="card"><form class="form" method="get"><input class="input" name="q" value="{esc(q)}" placeholder="Qidirish"><button class="btn">Qidirish</button><a class="btn gray" href="/employees">Tozalash</a></form>{table(['Xodim','Rol','Shop','Stavka',''], rows, 5)}</div>
-    <div class="card"><h2>Yangi xodim</h2><form class="grid" method="post" action="/employees/add"><input class="input" name="telegram_id" placeholder="Telegram ID" required><input class="input" name="name" placeholder="Ism" required><input class="input" name="phone" placeholder="Telefon"><select class="select" name="role"><option>staff</option><option>manager</option><option>admin</option></select><select class="select" name="shop">{shop_options('', False)}</select><input class="input" name="rate" placeholder="Stavka"><button class="btn">Qo‘shish</button></form></div></div>
+    <div class="card"><h2>Yangi xodim</h2><form class="grid" method="post" action="/employees/add"><input class="input" name="telegram_id" placeholder="Telegram ID" required><input class="input" name="name" placeholder="Ism" required><input class="input" name="phone" placeholder="Телефон"><select class="select" name="role"><option>staff</option><option>manager</option><option>admin</option></select><select class="select" name="shop">{shop_options('', False)}</select><input class="input" name="rate" placeholder="Stavka"><button class="btn">Qo‘shish</button></form></div></div>
     """
-    return layout(request, "employees", "Xodimlar", f"Jami: {len(staff)}", content)
+    return layout(request, "employees", "Сотрудники", f"Jami: {len(staff)}", content)
 
 
 @app.post("/employees/add")
@@ -740,8 +762,8 @@ async def employee_profile(request: Request, telegram_id: str):
         return layout(request, "employees", "Xodim topilmadi", telegram_id, "<div class='card'>Topilmadi</div>")
     user_row = db._execute("SELECT * FROM users WHERE company_id=? AND telegram_id=?", (db._current_cid(), telegram_id), "one")
     content = f"""
-    <div class="split"><div class="card"><h2>{esc(profile.get('emoji'))} {esc(profile.get('name'))}</h2><form class="grid" method="post" action="/employees/{esc(telegram_id)}/update"><input class="input" name="name" value="{esc(profile.get('name'))}"><input class="input" name="phone" value="{esc(user_row['phone'] if user_row else '')}" placeholder="Telefon"><select class="select" name="role"><option {'selected' if profile.get('role')=='staff' else ''}>staff</option><option {'selected' if profile.get('role')=='manager' else ''}>manager</option><option {'selected' if profile.get('role')=='admin' else ''}>admin</option></select><select class="select" name="shop">{shop_options(profile.get('shop','').split(',')[0].strip() if profile.get('shop') else '', False)}</select><input class="input" name="rate" value="{esc(profile.get('rate'))}"><input class="input" name="emoji" value="{esc(profile.get('emoji'))}"><button class="btn">Saqlash</button></form><form method="post" action="/employees/{esc(telegram_id)}/delete" style="margin-top:12px"><button class="btn danger" onclick="return confirm('Deaktivatsiya qilinsinmi?')">Deaktivatsiya</button></form></div>
-    <div class="card"><h2>Tezkor harakat</h2><a class="btn secondary" href="/shifts?telegram_id={esc(telegram_id)}">Smenalarini ko‘rish</a><br><br><a class="btn secondary" href="/schedule?telegram_id={esc(telegram_id)}">Grafigini ko‘rish</a></div></div>
+    <div class="split"><div class="card"><h2>{esc(profile.get('emoji'))} {esc(profile.get('name'))}</h2><form class="grid" method="post" action="/employees/{esc(telegram_id)}/update"><input class="input" name="name" value="{esc(profile.get('name'))}"><input class="input" name="phone" value="{esc(user_row['phone'] if user_row else '')}" placeholder="Телефон"><select class="select" name="role"><option {'selected' if profile.get('role')=='staff' else ''}>staff</option><option {'selected' if profile.get('role')=='manager' else ''}>manager</option><option {'selected' if profile.get('role')=='admin' else ''}>admin</option></select><select class="select" name="shop">{shop_options(profile.get('shop','').split(',')[0].strip() if profile.get('shop') else '', False)}</select><input class="input" name="rate" value="{esc(profile.get('rate'))}"><input class="input" name="emoji" value="{esc(profile.get('emoji'))}"><button class="btn">Saqlash</button></form><form method="post" action="/employees/{esc(telegram_id)}/delete" style="margin-top:12px"><button class="btn danger" onclick="return confirm('Deaktivatsiya qilinsinmi?')">Deaktivatsiya</button></form></div>
+    <div class="card"><h2>Tezkor harakat</h2><a class="btn secondary" href="/shifts?telegram_id={esc(telegram_id)}">Сменыini ko‘rish</a><br><br><a class="btn secondary" href="/schedule?telegram_id={esc(telegram_id)}">Grafigini ko‘rish</a></div></div>
     """
     return layout(request, "employees", "Xodim profili", profile.get("name", ""), content)
 
@@ -784,7 +806,7 @@ async def shops(request: Request):
     content = f"""
     <div class="split"><div class="card">{table(['Shop',''], rows, 2)}</div><div class="card"><h2>Yangi shop</h2><form class="grid" method="post" action="/shops/add"><input class="input" name="name" placeholder="Nom" required><input class="input" name="lat" placeholder="Lat"><input class="input" name="lon" placeholder="Lon"><input class="input" name="radius" value="500"><button class="btn">Qo‘shish</button></form></div></div>
     """
-    return layout(request, "shops", "Shoplar", "GPS va radius", content)
+    return layout(request, "shops", "Филиалы", "GPS va radius", content)
 
 
 @app.post("/shops/add")
@@ -840,7 +862,7 @@ async def shifts_page(request: Request, date_from: str = "", date_to: str = "", 
     content = f"""
     <div class="split"><div class="card"><form class="form" method="get"><input class="input" type="date" name="date_from" value="{esc(start.isoformat() if start else '')}"><input class="input" type="date" name="date_to" value="{esc(end.isoformat() if end else '')}"><select class="select" name="shop">{shop_options(shop)}</select><select class="select" name="status"><option value="">Barcha status</option><option value="open" {'selected' if status=='open' else ''}>open</option><option value="closed" {'selected' if status=='closed' else ''}>closed</option></select><button class="btn">Filter</button></form>{table(['Sana','Xodim','Shop','Keldi','Ketdi','Ishladi','Status',''], rows, 8)}</div>{add_form}</div>
     """
-    return layout(request, "shifts" if is_admin(current_user(request)) else "my_shifts", "Smenalar", f"{len(shifts)} ta qator", content)
+    return layout(request, "shifts" if is_admin(current_user(request)) else "my_shifts", "Смены", f"{len(shifts)} ta qator", content)
 
 
 @app.post("/shifts/add")
@@ -949,8 +971,8 @@ def quick_schedule_form(default_date: date | None = None, text: str = "", previe
     return f"""
     {alert_html}
     <div class="split">
-      <div class="card"><h2>⚡ Tez grafik import</h2><p class="sub">SD/TCM/FP/NEXT, lotin/kiril, username va ismdagi kichik xatolarni tushunadi. Avval Preview qiling, keyin saqlang.</p><form class="grid" method="post" action="/quick-schedule"><input class="input" type="date" name="default_date" value="{d.isoformat()}"><textarea name="text" rows="16" placeholder="{esc(example)}">{esc(text)}</textarea><div class="row"><button class="btn" name="action" value="preview">Preview</button>{save_btn}</div></form></div>
-      <div class="card"><h2>Format namunasi</h2><pre style="white-space:pre-wrap;background:#f8fafc;border-radius:14px;padding:14px">{esc(example)}</pre><p class="sub">Vaqtlar: 10-16, 10:00-16:00, 10.00-16.00. Shoplar: SD, TCM/TSM, FP, NEXT.</p></div>
+      <div class="card"><h2>⚡ Быстрый график import</h2><p class="sub">SD/TCM/FP/NEXT, lotin/kiril, username va ismdagi kichik xatolarni tushunadi. Avval Preview qiling, keyin saqlang.</p><form class="grid" method="post" action="/quick-schedule"><input class="input" type="date" name="default_date" value="{d.isoformat()}"><textarea name="text" rows="16" placeholder="{esc(example)}">{esc(text)}</textarea><div class="row"><button class="btn" name="action" value="preview">Preview</button>{save_btn}</div></form></div>
+      <div class="card"><h2>Format namunasi</h2><pre style="white-space:pre-wrap;background:#f8fafc;border-radius:14px;padding:14px">{esc(example)}</pre><p class="sub">Vaqtlar: 10-16, 10:00-16:00, 10.00-16.00. Филиалы: SD, TCM/TSM, FP, NEXT.</p></div>
     </div>
     <div class="card" style="margin-top:18px">{preview or '<h2>Preview shu yerda chiqadi</h2>'}</div>
     """
@@ -961,7 +983,7 @@ async def quick_schedule_page(request: Request, msg: str = ""):
     if red := require_admin(request):
         return red
     content = quick_schedule_form(default_date=now_tz().date(), alert=msg)
-    return layout(request, "quick_schedule", "⚡ Tez grafik", "Copy-paste grafikni avtomatik jadvalga aylantirish", content)
+    return layout(request, "quick_schedule", "⚡ Быстрый график", "Copy-paste grafikni avtomatik jadvalga aylantirish", content)
 
 
 @app.post("/quick-schedule", response_class=HTMLResponse)
@@ -978,25 +1000,25 @@ async def quick_schedule_post(request: Request, default_date: str = Form(""), te
     if action.startswith("save"):
         if not result.get("can_save"):
             content = quick_schedule_form(default_d, text, preview + "<div class='alert err'>Xatolar bor. Avval matnni tuzating.</div>", False)
-            return layout(request, "quick_schedule", "⚡ Tez grafik", "Xatolarni tuzatish kerak", content)
+            return layout(request, "quick_schedule", "⚡ Быстрый график", "Xatolarni tuzatish kerak", content)
         conflicts = find_conflicts(result.get("items") or [], await quick_existing_items(result.get("items") or []))
         if conflicts:
             conflict_html = "<div class='alert err'><b>Konflikt:</b><br>" + "<br>".join(esc(x) for x in conflicts[:8]) + "</div>"
             content = quick_schedule_form(default_d, text, preview + conflict_html, False)
-            return layout(request, "quick_schedule", "⚡ Tez grafik", "Konflikt topildi", content)
+            return layout(request, "quick_schedule", "⚡ Быстрый график", "Konflikt topildi", content)
         ok = await db.append_schedule_rows(result.get("items") or [])
         if not ok:
             content = quick_schedule_form(default_d, text, preview + "<div class='alert err'>Bazaga yozishda xatolik chiqdi.</div>", False)
-            return layout(request, "quick_schedule", "⚡ Tez grafik", "Saqlash xatosi", content)
+            return layout(request, "quick_schedule", "⚡ Быстрый график", "Saqlash xatosi", content)
         if action == "save_publish":
             try:
                 send_telegram_message(str(config.group_chat_id), render_quick_schedule_preview(result).replace("✅ Saqlashga tayyor.", ""))
             except Exception:
                 pass
-        return redirect("/quick-schedule?msg=" + urllib.parse.quote(f"Tez grafik saqlandi: {len(result.get('items') or [])} qator"))
+        return redirect("/quick-schedule?msg=" + urllib.parse.quote(f"Быстрый график saqlandi: {len(result.get('items') or [])} qator"))
 
     content = quick_schedule_form(default_d, text, preview, bool(result.get("can_save")))
-    return layout(request, "quick_schedule", "⚡ Tez grafik", "Preview natijasi", content)
+    return layout(request, "quick_schedule", "⚡ Быстрый график", "Preview natijasi", content)
 
 
 @app.get("/schedule", response_class=HTMLResponse)
@@ -1013,10 +1035,10 @@ async def schedule_page(request: Request, date_from: str = "", date_to: str = ""
         data = [r for r in data if r.get("shop") == shop]
     rows = "".join(f"<tr><td>{r['date'].strftime('%d.%m.%Y')}</td><td>{esc(r.get('name'))}</td><td>{esc(r.get('shop'))}</td><td>{esc(r.get('start'))}</td><td>{esc(r.get('end'))}</td><td>{esc(r.get('status') or 'shift')}</td><td><a class='btn secondary' href='/schedule/{r['row']}'>Edit</a></td></tr>" for r in data[:1000])
     add_form = "" if not is_admin(current_user(request)) else f"""
-    <div class="card"><h2>Grafik qo‘shish</h2><form class="grid" method="post" action="/schedule/add"><select class="select" name="telegram_id">{staff_options()}</select><select class="select" name="shop">{shop_options('', False)}</select><input class="input" type="date" name="work_date" value="{today.isoformat()}"><select class="select" name="kind"><option value="shift">Ish smenasi</option><option value="day_off">Dam olish</option><option value="vacation">Otpusk</option><option value="sick_leave">Bolnichniy</option></select><input class="input" type="time" name="start_time"><input class="input" type="time" name="end_time"><button class="btn">Qo‘shish</button></form></div>
+    <div class="card"><h2>График qo‘shish</h2><form class="grid" method="post" action="/schedule/add"><select class="select" name="telegram_id">{staff_options()}</select><select class="select" name="shop">{shop_options('', False)}</select><input class="input" type="date" name="work_date" value="{today.isoformat()}"><select class="select" name="kind"><option value="shift">Ish smenasi</option><option value="day_off">Dam olish</option><option value="vacation">Otpusk</option><option value="sick_leave">Bolnichniy</option></select><input class="input" type="time" name="start_time"><input class="input" type="time" name="end_time"><button class="btn">Qo‘shish</button></form></div>
     """
     content = f"<div class='split'><div class='card'><form class='form' method='get'><input class='input' type='date' name='date_from' value='{esc(start.isoformat() if start else '')}'><input class='input' type='date' name='date_to' value='{esc(end.isoformat() if end else '')}'><select class='select' name='shop'>{shop_options(shop)}</select><button class='btn'>Filter</button></form>{table(['Sana','Xodim','Shop','Boshlanish','Tugash','Tur',''], rows, 7)}</div>{add_form}</div>"
-    return layout(request, "schedule" if is_admin(current_user(request)) else "my_schedule", "Grafik", f"{len(data)} qator", content)
+    return layout(request, "schedule" if is_admin(current_user(request)) else "my_schedule", "График", f"{len(data)} qator", content)
 
 
 @app.post("/schedule/add")
@@ -1038,12 +1060,12 @@ async def schedule_edit_page(request: Request, sched_id: int):
         return red
     r = await db.get_schedule_by_id(sched_id)
     if not r:
-        return layout(request, "schedule", "Grafik topilmadi", str(sched_id), "<div class='card'>Topilmadi</div>")
+        return layout(request, "schedule", "График topilmadi", str(sched_id), "<div class='card'>Topilmadi</div>")
     kind = r.get("status") or "shift"
     content = f"""
-    <div class="card"><h2>Grafikni tahrirlash</h2><form class="grid" method="post" action="/schedule/{sched_id}/update"><select class="select" name="telegram_id">{staff_options(str(r['telegram_id']))}</select><select class="select" name="shop">{shop_options(r.get('shop',''), False)}</select><input class="input" type="date" name="work_date" value="{r['date'].isoformat()}"><select class="select" name="kind"><option value="shift" {'selected' if kind=='shift' else ''}>Ish smenasi</option><option value="day_off" {'selected' if kind=='day_off' else ''}>Dam olish</option><option value="vacation" {'selected' if kind=='vacation' else ''}>Otpusk</option><option value="sick_leave" {'selected' if kind=='sick_leave' else ''}>Bolnichniy</option></select><input class="input" type="time" name="start_time" value="{esc(r.get('start') if not str(r.get('start')).startswith('STATUS:') else '')}"><input class="input" type="time" name="end_time" value="{esc(r.get('end') if kind=='shift' else '')}"><button class="btn">Saqlash</button></form><form method="post" action="/schedule/{sched_id}/delete" style="margin-top:12px"><button class="btn danger">O‘chirish</button></form></div>
+    <div class="card"><h2>Графикni tahrirlash</h2><form class="grid" method="post" action="/schedule/{sched_id}/update"><select class="select" name="telegram_id">{staff_options(str(r['telegram_id']))}</select><select class="select" name="shop">{shop_options(r.get('shop',''), False)}</select><input class="input" type="date" name="work_date" value="{r['date'].isoformat()}"><select class="select" name="kind"><option value="shift" {'selected' if kind=='shift' else ''}>Ish smenasi</option><option value="day_off" {'selected' if kind=='day_off' else ''}>Dam olish</option><option value="vacation" {'selected' if kind=='vacation' else ''}>Otpusk</option><option value="sick_leave" {'selected' if kind=='sick_leave' else ''}>Bolnichniy</option></select><input class="input" type="time" name="start_time" value="{esc(r.get('start') if not str(r.get('start')).startswith('STATUS:') else '')}"><input class="input" type="time" name="end_time" value="{esc(r.get('end') if kind=='shift' else '')}"><button class="btn">Saqlash</button></form><form method="post" action="/schedule/{sched_id}/delete" style="margin-top:12px"><button class="btn danger">O‘chirish</button></form></div>
     """
-    return layout(request, "schedule", "Grafik edit", f"#{sched_id}", content)
+    return layout(request, "schedule", "График edit", f"#{sched_id}", content)
 
 
 @app.post("/schedule/{sched_id}/update")
@@ -1089,7 +1111,7 @@ async def salary(request: Request, year: int | None = None, month: int | None = 
         rows += f"<tr><td>{esc(s.get('Имя'))}</td><td>{esc(s.get('Магазин'))}</td><td>{summary['hours']}</td><td>{money(summary['rate'])}</td><td><b>{money(summary['earnings'])}</b></td></tr>"
     month_opts = "".join(f"<option value='{i}' {'selected' if i==m else ''}>{month_name(i)}</option>" for i in range(1, 13))
     content = f"<div class='card'><form class='form'><input class='input' name='year' value='{y}'><select class='select' name='month'>{month_opts}</select><button class='btn'>Hisoblash</button></form><h2>{month_name(m)} {y}: {money(total)} so‘m</h2>{table(['Xodim','Shop','Soat','Stavka','Jami'], rows, 5)}</div>"
-    return layout(request, "salary", "Oylik", "Eski botdagi yaxlitlash qoidasi bilan", content)
+    return layout(request, "salary", "Зарплата", "Eski botdagi yaxlitlash qoidasi bilan", content)
 
 
 @app.post("/requests/add")
@@ -1108,7 +1130,7 @@ async def requests_page(request: Request):
         return red
     rows_db = db._execute("SELECT er.*, u.full_name FROM employee_requests er LEFT JOIN users u ON u.id=er.user_id WHERE er.company_id=? ORDER BY er.created_at DESC", (db._current_cid(),), "all")
     rows = "".join(f"<tr><td>{esc(r['created_at'])}</td><td>{esc(r['full_name'])}</td><td>{esc(r['type'])}</td><td>{esc(r['reason'])}</td><td>{esc(r['status'])}</td><td><form class='row' method='post' action='/requests/{r['id']}/status'><select class='select' name='status'><option>pending</option><option>approved</option><option>rejected</option></select><button class='btn'>Saqlash</button></form></td></tr>" for r in rows_db)
-    return layout(request, "requests", "Arizalar", "Xodimlardan kelgan arizalar", f"<div class='card'>{table(['Sana','Xodim','Tur','Sabab','Status',''], rows, 6)}</div>")
+    return layout(request, "requests", "Заявки", "Сотрудникиdan kelgan arizalar", f"<div class='card'>{table(['Sana','Xodim','Tur','Sabab','Status',''], rows, 6)}</div>")
 
 
 @app.post("/requests/{rid}/status")
@@ -1125,8 +1147,8 @@ async def inventory(request: Request):
         return red
     rows_db = db._execute("SELECT i.*, u.full_name FROM inventory i LEFT JOIN users u ON u.id=i.user_id WHERE i.company_id=? ORDER BY i.id DESC", (db._current_cid(),), "all")
     rows = "".join(f"<tr><td>{esc(r['full_name'])}</td><td>{esc(r['item_name'])}</td><td>{esc(r['quantity'])}</td><td>{esc(r['given_date'])}</td><td>{esc(r['status'])}</td></tr>" for r in rows_db)
-    content = f"<div class='split'><div class='card'>{table(['Xodim','Narsa','Soni','Berilgan sana','Status'], rows, 5)}</div><div class='card'><h2>Inventar berish</h2><form class='grid' method='post' action='/inventory/add'><select class='select' name='telegram_id'>{staff_options()}</select><input class='input' name='item_name' placeholder='Narsa nomi'><input class='input' name='quantity' value='1'><input class='input' type='date' name='given_date' value='{now_tz().date().isoformat()}'><button class='btn'>Qo‘shish</button></form></div></div>"
-    return layout(request, "inventory", "Inventar", "Xodimlarga biriktirilgan narsalar", content)
+    content = f"<div class='split'><div class='card'>{table(['Xodim','Narsa','Soni','Berilgan sana','Status'], rows, 5)}</div><div class='card'><h2>Инвентарь berish</h2><form class='grid' method='post' action='/inventory/add'><select class='select' name='telegram_id'>{staff_options()}</select><input class='input' name='item_name' placeholder='Narsa nomi'><input class='input' name='quantity' value='1'><input class='input' type='date' name='given_date' value='{now_tz().date().isoformat()}'><button class='btn'>Qo‘shish</button></form></div></div>"
+    return layout(request, "inventory", "Инвентарь", "Сотрудникиga biriktirilgan narsalar", content)
 
 
 @app.post("/inventory/add")
@@ -1146,9 +1168,9 @@ async def export_page(request: Request, msg: str = ""):
     alert = f"<div class='alert ok'>{esc(msg)}</div>" if msg else ""
     month_opts = "".join(f"<option value='{i}' {'selected' if i==n.month else ''}>{month_name(i)}</option>" for i in range(1, 13))
     content = f"""
-    {alert}<div class="grid" style="grid-template-columns:repeat(2,minmax(0,1fr))"><div class="card"><h2>SQLite → Google Sheets</h2><form class="grid" method="post" action="/export/run"><select class="select" name="export_type"><option value="employees">Xodimlar</option><option value="shifts">Smenalar</option><option value="schedule">Grafik</option></select><button class="btn">Export</button></form></div><div class="card"><h2>Oy tabeli</h2><form class="grid" method="post" action="/export/run"><input type="hidden" name="export_type" value="tabel"><input class="input" name="year" value="{n.year}"><select class="select" name="month">{month_opts}</select><select class="select" name="shop">{shop_options('')}</select><button class="btn">Tabel export</button></form></div></div>
+    {alert}<div class="grid" style="grid-template-columns:repeat(2,minmax(0,1fr))"><div class="card"><h2>SQLite → Google Sheets</h2><form class="grid" method="post" action="/export/run"><select class="select" name="export_type"><option value="employees">Сотрудники</option><option value="shifts">Смены</option><option value="schedule">График</option></select><button class="btn">Экспорт</button></form></div><div class="card"><h2>Oy tabeli</h2><form class="grid" method="post" action="/export/run"><input type="hidden" name="export_type" value="tabel"><input class="input" name="year" value="{n.year}"><select class="select" name="month">{month_opts}</select><select class="select" name="shop">{shop_options('')}</select><button class="btn">Tabel export</button></form></div></div>
     """
-    return layout(request, "export", "Export", "Google Sheetsga hisobot chiqarish", content)
+    return layout(request, "export", "Экспорт", "Google Sheetsga hisobot chiqarish", content)
 
 
 @app.post("/export/run")
@@ -1158,13 +1180,13 @@ async def export_run(request: Request, export_type: str = Form(...), year: int =
     try:
         if export_type == "employees":
             count = await export_employees()
-            msg = f"Xodimlar export qilindi: {count}"
+            msg = f"Сотрудники export qilindi: {count}"
         elif export_type == "shifts":
             count = await export_shifts()
-            msg = f"Smenalar export qilindi: {count}"
+            msg = f"Смены export qilindi: {count}"
         elif export_type == "schedule":
             count = await export_schedule()
-            msg = f"Grafik export qilindi: {count}"
+            msg = f"График export qilindi: {count}"
         elif export_type == "tabel":
             count = await export_month_timesheet(None, int(year), int(month), shop or None)
             msg = f"Tabel export qilindi: {count}"

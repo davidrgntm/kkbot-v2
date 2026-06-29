@@ -40,6 +40,13 @@ async def start_web_server():
     except Exception as e:
         logging.exception("KKB stable web patch ulanmagan: %s", e)
 
+    try:
+        from premium_ui_patch import apply_premium_ui_patch
+        apply_premium_ui_patch(app)
+        logging.info("Premium web UI patch ulandi ✅")
+    except Exception as e:
+        logging.exception("Premium web UI patch ulanmagan: %s", e)
+
     port = int(os.environ.get("PORT", "8000"))
     web_config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info", loop="asyncio")
     server = uvicorn.Server(web_config)

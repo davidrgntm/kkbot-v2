@@ -87,7 +87,16 @@ def parse_dt(value: Any) -> datetime | None:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value)).replace(tzinfo=None)
+        text = str(value).strip()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        dt = datetime.fromisoformat(text)
+        if dt.tzinfo is not None:
+            try:
+                dt = dt.astimezone(config.get_timezone_obj())
+            except Exception:
+                pass
+        return dt.replace(tzinfo=None)
     except Exception:
         return None
 
@@ -117,6 +126,8 @@ def legacy_paid_minutes(raw_minutes: int) -> tuple[int, int]:
 def raw_minutes(row) -> int:
     s = parse_dt(row["start_at"])
     e = parse_dt(row["end_at"])
+    if not e and str(row_get(row, "status", "")) == "open":
+        e = ws.now_tz()
     if not s or not e:
         return 0
     return max(0, int((e - s).total_seconds() // 60))
@@ -124,9 +135,9 @@ def raw_minutes(row) -> int:
 
 def paid_for_shift(row) -> tuple[int, int, int]:
     raw = raw_minutes(row)
-    paid = int(row["worked_minutes"] or 0)
-    br = int(row["break_minutes"] or 0)
-    if paid <= 0 and row["end_at"]:
+    paid = int(row_get(row, "worked_minutes", 0) or 0)
+    br = int(row_get(row, "break_minutes", 0) or 0)
+    if paid <= 0 and (row_get(row, "end_at") or str(row_get(row, "status", "")) == "open"):
         paid, br = legacy_paid_minutes(raw)
     return raw, paid, br
 
@@ -244,30 +255,167 @@ def ensure_user_and_shops(telegram_id: str, name: str, role: str, shops: list[st
             db._execute("INSERT OR IGNORE INTO user_shops(user_id, shop_id) VALUES (?, ?)", (uid, sid))
     return uid
 
+RU_REPLACEMENTS = {
+    "Yangilash": "Обновить",
+    "Chiqish": "Выйти",
+    "Ma'lumot yo‘q": "Нет данных",
+    "Ma’lumot yo‘q": "Нет данных",
+    "Barcha filiallar": "Все филиалы",
+    "Barcha shoplar": "Все филиалы",
+    "Barcha status": "Все статусы",
+    "Xodimlar": "Сотрудники",
+    "Xodim": "Сотрудник",
+    "Filiallar": "Филиалы",
+    "Shop": "Филиал",
+    "Shoplar": "Филиалы",
+    "Smenalar": "Смены",
+    "Smena": "Смена",
+    "Grafik": "График",
+    "Tez grafik": "Быстрый график",
+    "Oylik": "Зарплата",
+    "Arizalar": "Заявки",
+    "Inventar": "Инвентарь",
+    "Hisobotlar": "Отчёты",
+    "Kabinet": "Кабинет",
+    "Grafikim": "Мой график",
+    "Smenalarim": "Мои смены",
+    "Keldim": "Пришёл",
+    "Ketdim": "Ушёл",
+    "AI tekshiruv": "AI-проверка",
+    "Faol xodimlar": "Активные сотрудники",
+    "Hozir ishda": "Сейчас на работе",
+    "Bugun yopilgan": "Закрыто сегодня",
+    "Bu oy yozilgan": "Начислено за месяц",
+    "Bu oy real": "Фактически за месяц",
+    "bazadagi active xodimlar": "активные сотрудники в базе",
+    "live ochiq smena": "открытые смены онлайн",
+    "closed smenalar": "закрытые смены",
+    "Online smenalar": "Онлайн-смены",
+    "Hozir qaysi magazinda nechta odam?": "Сколько людей сейчас в каждом филиале?",
+    "Bugungi punctuality": "Пунктуальность за сегодня",
+    "Vaqtida": "Вовремя",
+    "Kechikdi": "Опоздал",
+    "Erta keldi": "Пришёл раньше",
+    "Erta": "Раньше",
+    "Rejasiz": "Без графика",
+    "Reja xato": "Ошибка графика",
+    "Oxirgi smenalar: reja / fakt / hisob": "Последние смены: план / факт / расчёт",
+    "Yangilandi": "Обновлено",
+    "Ism": "Имя",
+    "Rol": "Роль",
+    "Stavka": "Ставка",
+    "Jami": "Итого",
+    "Jami oylik": "Итого зарплата",
+    "Sana": "Дата",
+    "Keldi": "Пришёл",
+    "Ketdi": "Ушёл",
+    "Ishladi": "Отработал",
+    "Holat": "Статус",
+    "Real ishladi": "Факт",
+    "Yozildi": "Начислено",
+    "Pul": "Сумма",
+    "Reja": "План",
+    "Kechikish": "Опоздание",
+    "Qidirish": "Поиск",
+    "Tozalash": "Очистить",
+    "Qo‘shish": "Добавить",
+    "Saqlash": "Сохранить",
+    "O‘chirish": "Удалить",
+    "Tahrirlash": "Редактировать",
+    "Ochish": "Открыть",
+    "Deaktivatsiya": "Деактивировать",
+    "Yangi xodim qo‘shish": "Добавить сотрудника",
+    "Yangi xodim": "Новый сотрудник",
+    "Yangi shop": "Новый филиал",
+    "Ism": "Имя",
+    "Telefon": "Телефон",
+    "Lavozim": "Должность",
+    "Bo‘lim": "Отдел",
+    "Xodim qidirish": "Поиск сотрудника",
+    "telefon yo‘q": "телефона нет",
+    "Xodim profili": "Профиль сотрудника",
+    "Xodim topilmadi": "Сотрудник не найден",
+    "Topilmadi": "Не найдено",
+    "Bu oy": "Этот месяц",
+    "tushlik": "обед",
+    "Sana oralig‘i, eski yaxlitlash qoidasi va tushlik ayrimi bilan": "Период, округление и вычет обеда по правилам старого бота",
+    "Hisoblash": "Рассчитать",
+    "oy oxiri": "конец месяца",
+    "Real": "Факт",
+    "Yozilgan": "Начислено",
+    "Filial tanlanmagan": "Филиал не выбран",
+    "Avval filialni tanlang.": "Сначала выберите филиал.",
+    "Ko‘rish": "Показать",
+    "Excel hisobotni yuklab olish": "Скачать Excel-отчёт",
+    "Botdagi magazin oylik Excel hisobotini webdan olish": "Получение месячного Excel-отчёта по филиалу из веб-панели",
+    "Smena soni": "Кол-во смен",
+    "Yozilgan soat": "Начисленные часы",
+    "Smenani tahrirlash": "Редактирование смены",
+    "Qo‘lda smena qo‘shish": "Добавить смену вручную",
+    "Grafik qo‘shish": "Добавить график",
+    "Ish smenasi": "Рабочая смена",
+    "Dam olish": "Выходной",
+    "Otpusk": "Отпуск",
+    "Bolnichniy": "Больничный",
+    "Boshlanish": "Начало",
+    "Tugash": "Конец",
+    "Tur": "Тип",
+    "Filter": "Фильтр",
+    "Copy-paste grafikni avtomatik jadvalga aylantirish": "Автоматическое превращение copy-paste графика в таблицу",
+    "Tez grafik import": "Быстрый импорт графика",
+    "Format namunasi": "Пример формата",
+    "Preview natijasi": "Результат предпросмотра",
+    "Xatolarni tuzatish kerak": "Нужно исправить ошибки",
+    "Konflikt topildi": "Найден конфликт",
+    "Saqlash xatosi": "Ошибка сохранения",
+    "Yuborish": "Отправить",
+    "Ariza yuborish": "Отправить заявку",
+    "Sabab": "Причина",
+    "Narsa": "Предмет",
+    "Soni": "Количество",
+    "Berilgan sana": "Дата выдачи",
+    "Inventar berish": "Выдать инвентарь",
+    "Narsa nomi": "Название предмета",
+    "Google Sheetsga hisobot chiqarish": "Выгрузка отчёта в Google Sheets",
+    "Oy tabeli": "Табель за месяц",
+    "so‘m": "сум",
+    "soat": "час",
+    "qator": "строк",
+    "ta qator": "строк",
+    "Jami:": "Всего:",
+}
+
+def ru_html(text: Any) -> str:
+    out = str(text if text is not None else "")
+    # Long phrases first so shorter words do not break them.
+    for src, dst in sorted(RU_REPLACEMENTS.items(), key=lambda x: len(x[0]), reverse=True):
+        out = out.replace(src, dst)
+    return out
+
 
 def stable_nav(active: str, user: dict) -> str:
     admin = ws.is_admin(user)
     if admin:
         items = [
-            ("dashboard", "/dashboard", "🏠 Dashboard"),
-            ("verification", "/verification", "🧠 AI tekshiruv"),
-            ("employees", "/employees", "👥 Xodimlar"),
-            ("shops", "/shops", "🏪 Filiallar"),
-            ("shifts", "/shifts", "🟢 Smenalar"),
-            ("schedule", "/schedule", "📅 Grafik"),
-            ("quick_schedule", "/quick-schedule", "⚡ Tez grafik"),
-            ("salary", "/salary", "💰 Oylik"),
-            ("requests", "/requests", "📝 Arizalar"),
-            ("inventory", "/inventory", "📦 Inventar"),
-            ("reports", "/reports", "🧾 Hisobotlar"),
+            ("dashboard", "/dashboard", "🏠 Дашборд"),
+            ("verification", "/verification", "🧠 AI-проверка"),
+            ("employees", "/employees", "👥 Сотрудники"),
+            ("shops", "/shops", "🏪 Филиалы"),
+            ("shifts", "/shifts", "🟢 Смены"),
+            ("schedule", "/schedule", "📅 График"),
+            ("quick_schedule", "/quick-schedule", "⚡ Быстрый график"),
+            ("salary", "/salary", "💰 Зарплата"),
+            ("requests", "/requests", "📝 Заявки"),
+            ("inventory", "/inventory", "📦 Инвентарь"),
+            ("reports", "/reports", "🧾 Отчёты"),
         ]
     else:
         items = [
-            ("cabinet", "/cabinet", "👤 Kabinet"),
-            ("checkin", "/checkin", "🟢 Keldim"),
-            ("checkout", "/checkout", "🔴 Ketdim"),
-            ("my_schedule", "/schedule", "📅 Grafikim"),
-            ("my_shifts", "/shifts", "🟢 Smenalarim"),
+            ("cabinet", "/cabinet", "👤 Кабинет"),
+            ("checkin", "/checkin", "🟢 Пришёл"),
+            ("checkout", "/checkout", "🔴 Ушёл"),
+            ("my_schedule", "/schedule", "📅 Мой график"),
+            ("my_shifts", "/shifts", "🟢 Мои смены"),
         ]
     links = "".join(f'<a class="{"active" if k == active else ""}" href="{h}">{lab}</a>' for k, h, lab in items)
     return f"""
@@ -275,7 +423,7 @@ def stable_nav(active: str, user: dict) -> str:
       <div class="logo"><div class="logo-badge">K</div><div>KKB<br><span style="font-size:12px;color:#93c5fd;font-weight:700">Web Panel</span></div></div>
       <div style="margin-bottom:16px;color:#bfdbfe;font-size:14px">{esc(user.get('name') or 'User')}<br>{esc(user.get('role') or '')}</div>
       <nav class="nav">{links}</nav>
-      <form method="post" action="/logout" style="margin-top:22px"><button class="btn gray" style="width:100%">Chiqish</button></form>
+      <form method="post" action="/logout" style="margin-top:22px"><button class="btn gray" style="width:100%">Выйти</button></form>
     </aside>
     """
 
@@ -289,7 +437,11 @@ def stable_layout(request: Request, active: str, title: str, subtitle: str, cont
     window.addEventListener('load',()=>{const y=sessionStorage.getItem('scrollY'); if(y){setTimeout(()=>window.scrollTo(0, Number(y)),30)}});
     </script>
     """
-    return HTMLResponse(f"""<!doctype html><html lang="uz"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · KKB</title><style>{ws.CSS}{EXTRA_CSS}</style></head><body>{mobile}<div class="app">{stable_nav(active, user)}<main class="main"><div class="top"><div><div class="h1">{esc(title)}</div><div class="sub">{subtitle}</div></div><button class="btn secondary" onclick="location.reload()">Yangilash</button></div>{content}<div class="footer">DB: {esc(db.db_path)} · Company: {esc(db._current_cid())}</div></main></div>{script}</body></html>""")
+    title_ru = ru_html(title)
+    subtitle_ru = ru_html(subtitle)
+    content_ru = ru_html(content)
+    mobile_ru = f"<div class='mobile-head'><b>KKB · {esc(title_ru)}</b><button class='hamb' onclick=\"document.getElementById('sideNav').classList.toggle('open')\">☰ Меню</button></div>"
+    return HTMLResponse(f"""<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title_ru)} · KKB</title><style>{ws.CSS}{EXTRA_CSS}</style></head><body>{mobile_ru}<div class="app">{stable_nav(active, user)}<main class="main"><div class="top"><div><div class="h1">{esc(title_ru)}</div><div class="sub">{subtitle_ru}</div></div><button class="btn secondary" onclick="location.reload()">Обновить</button></div>{content_ru}<div class="footer">DB: {esc(db.db_path)} · Company: {esc(db._current_cid())}</div></main></div>{script}</body></html>""")
 
 
 EXTRA_CSS = r'''
@@ -354,7 +506,7 @@ def scan_page(label: str, action: str, user: dict) -> HTMLResponse:
     is_out = action == "check_out"
     action_title = "Ketdim" if is_out else "Keldim"
     html_page = r"""<!doctype html>
-<html lang="uz">
+<html lang="ru">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -426,7 +578,7 @@ def scan_page(label: str, action: str, user: dict) -> HTMLResponse:
     if(navigator.mediaDevices && navigator.mediaDevices.getUserMedia){ return navigator.mediaDevices.getUserMedia(c); }
     var old = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia;
     if(old){ return new Promise(function(resolve, reject){ old.call(navigator, c, resolve, reject); }); }
-    return Promise.reject(new Error("Kamera API topilmadi. Safari yoki Chrome brauzerida oching."));
+    return Promise.reject(new Error("API камеры не найден. Откройте в Safari или Chrome."));
   }
   function startCamera(){
     setStatus("Kamera tekshirilmoqda", "Ruxsat oynasi chiqsa Allow bosing.");
@@ -438,7 +590,7 @@ def scan_page(label: str, action: str, user: dict) -> HTMLResponse:
       try { var p = v.play(); if(p && p.catch){ p.catch(function(){}); } } catch(e) {}
       cameraReady = true;
       stepOk("cameraStep", "Kamera tayyor");
-      setStatus("Yuzingizni oval ichida ushlang", "Liveness avtomatik tekshirilmoqda.");
+      setStatus("Держите лицо внутри овала", "Liveness проверяется автоматически.");
       startLiveness();
       checkReady();
     }).catch(function(e){
@@ -463,10 +615,10 @@ def scan_page(label: str, action: str, user: dict) -> HTMLResponse:
   function startLiveness(){
     if(liveReady){ return; }
     var n = 3;
-    stepOk("liveStep", "Yuzingizni oval ichida ushlang: 3");
+    stepOk("liveStep", "Держите лицо внутри овала: 3");
     var t = setInterval(function(){
       n = n - 1;
-      if(n > 0){ stepOk("liveStep", "Yuzingizni oval ichida ushlang: " + n); }
+      if(n > 0){ stepOk("liveStep", "Держите лицо внутри овала: " + n); }
       else { clearInterval(t); liveReady = true; stepOk("liveStep", "Liveness otdi"); checkReady(); }
     }, 750);
   }
@@ -570,7 +722,7 @@ def reference_card(tid: str) -> str:
               <input type="file" name="file" accept="image/*" required style="max-width:280px">
               <button class="btn" type="submit">Sifatli rasmni saqlash</button>
             </form>
-            <div class="muted" style="font-size:12px;margin-top:8px">Maslahat: yuz to‘liq ko‘rinsin, yorug‘ joyda, filtrsiz va aniq foto tanlang.</div>
+            <div class="muted" style="font-size:12px;margin-top:8px">Совет: лицо должно быть видно полностью, фото — без фильтров, при хорошем освещении.</div>
           </div>
         </div>
       </div>
@@ -593,7 +745,7 @@ def staff_cabinet(request: Request, user: dict) -> HTMLResponse:
     if not rows:
         rows = "<tr><td colspan='5'>Hali smena yo‘q</td></tr>"
     active_html = f"<div class='card'><span class='pill green'>Hozir ishda</span><h2>{esc(active['shop'])}</h2><p class='muted'>Boshlangan: {dt_short(active['start_at'])}</p></div>" if active else ""
-    body = f"""<!doctype html><html lang="uz"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kabinet · KKB</title><style>{ws.CSS}{EXTRA_CSS}</style></head><body><div class="staff-wrap">
+    body = f"""<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kabinet · KKB</title><style>{ws.CSS}{EXTRA_CSS}</style></head><body><div class="staff-wrap">
       <div class="top"><h1>KKB · Kabinet</h1><form method="post" action="/logout"><button class="btn gray">Chiqish</button></form></div>
       <div class="staff-hero"><div class="emp-card"><div class="emp-avatar">{esc(row_get(u, 'emoji', '👤') or '👤')}</div><div><h2 style="margin:0">{esc(user.get('name') or row_get(u, 'full_name', 'Xodim') or 'Xodim')}</h2><p style="color:#bfdbfe;margin:6px 0 0">{esc(row_get(u, 'role', None) or user.get('role') or 'staff')}</p></div></div></div>
       <div class="big-actions"><a class="green" href="/checkin">🟢 Keldim</a><a class="red" href="/checkout">🔴 Ketdim</a></div>{active_html}
@@ -841,6 +993,12 @@ def apply_stable_patch(app) -> None:
     # Make built-in pages use the same sidebar/menu.
     ws.nav = stable_nav
     ws.layout = stable_layout
+    if not getattr(ws, "_kkb_ru_dashboard", False):
+        _orig_render_dashboard = ws._render_dashboard
+        def _render_dashboard_ru(payload):
+            return ru_html(_orig_render_dashboard(payload))
+        ws._render_dashboard = _render_dashboard_ru
+        ws._kkb_ru_dashboard = True
 
     routes_to_replace = [
         ("/cabinet", "GET"), ("/cabinet/reference-photo", "POST"), ("/face-reference/{telegram_id}", "GET"),
@@ -877,9 +1035,9 @@ def apply_stable_patch(app) -> None:
             ensure_verification_tables()
             raw = await file.read()
             if not raw:
-                return HTMLResponse("Rasm kelmadi", status_code=400)
+                return HTMLResponse("Фото не получено", status_code=400)
             if len(raw) > 8 * 1024 * 1024:
-                return HTMLResponse("Rasm hajmi 8 MB dan katta bo‘lmasin", status_code=400)
+                return HTMLResponse("Размер фото не должен превышать 8 MB", status_code=400)
             ext = Path(file.filename or "reference.jpg").suffix.lower()
             if ext not in {".jpg", ".jpeg", ".png", ".webp"}:
                 ext = ".jpg"
@@ -902,7 +1060,7 @@ def apply_stable_patch(app) -> None:
             return RedirectResponse("/cabinet?reference=ok", status_code=303)
         except Exception as e:
             print(f"[kkb_stable_patch] reference upload failed: {e}")
-            return HTMLResponse(f"Reference rasm saqlanmadi: {esc(e)}", status_code=500)
+            return HTMLResponse(f"Эталонное фото не сохранено: {esc(e)}", status_code=500)
 
     @app.get("/face-reference/{telegram_id}")
     async def face_reference(request: Request, telegram_id: str):
@@ -961,9 +1119,9 @@ def apply_stable_patch(app) -> None:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         user = ws.current_user(request)
         if not user or ws.is_admin(user):
-            return JSONResponse({"emoji": "⚠️", "title": "Xodim uchun", "message": "Keldim/Ketdim faqat xodim kabinetidan qilinadi."}, status_code=400)
+            return JSONResponse({"emoji": "⚠️", "title": "Только для сотрудника", "message": "Приход/уход доступен только из кабинета сотрудника."}, status_code=400)
         if liveness != "ok":
-            return JSONResponse({"emoji": "⚠️", "title": "Liveness yo‘q", "message": "Avval liveness tekshiruvdan o‘ting."}, status_code=400)
+            return JSONResponse({"emoji": "⚠️", "title": "Нет liveness-проверки", "message": "Сначала пройдите liveness-проверку."}, status_code=400)
         tid = str(user["telegram_id"])
         selfie_path = save_data_url_image(image_data, tid, "web")
         active = await db.get_active_shift_row(int(tid))
@@ -974,29 +1132,29 @@ def apply_stable_patch(app) -> None:
         staff = await db.get_user_by_telegram_id(int(tid))
         staff_for_shift = staff.copy() if staff else {"TelegramID": tid, "Имя": user.get("name", "Xodim"), "Роль": "staff", "Магазин": ""}
         if action == "check_in" and active:
-            return JSONResponse({"emoji":"⚠️", "title":"Smena ochiq", "message":"Sizda ochiq smena bor. Avval Ketdim qiling.", "face_status":"-", "location_status":"-"})
+            return JSONResponse({"emoji":"⚠️", "title":"Смена открыта", "message":"У вас уже есть открытая смена. Сначала нажмите «Ушёл».", "face_status":"-", "location_status":"-"})
         if action == "check_out" and not active:
-            return JSONResponse({"emoji":"⚠️", "title":"Ochiq smena yo‘q", "message":"Avval Keldim qiling.", "face_status":"-", "location_status":"-"})
+            return JSONResponse({"emoji":"⚠️", "title":"Открытой смены нет", "message":"Сначала нажмите «Пришёл».", "face_status":"-", "location_status":"-"})
         fallback_shop = str(staff_for_shift.get("Магазин", "")).split(",")[0].strip()
         result = verify_attendance(tid, action, selfie_path, latitude, longitude, acc, shift_id=active, source="web", fallback_shop=fallback_shop)
         if result.get("final_status") == "rejected":
             notify_group(action, user.get("name", "Xodim"), result.get("shop") or fallback_shop, result, selfie_path, loc_url)
-            return JSONResponse({"emoji":"❌", "title":"Rad etildi", "message":"Selfie/GPS mos kelmadi. Admin tekshiradi.", **result})
+            return JSONResponse({"emoji":"❌", "title":"Отклонено", "message":"Selfie/GPS не совпали. Админ проверит.", **result})
         if action == "check_in":
             staff_for_shift["Магазин"] = result.get("shop") or fallback_shop
             ok = await db.start_shift(staff_for_shift, f"web:{result['check_id']}", loc_url)
             if not ok:
-                return JSONResponse({"emoji":"❌", "title":"Smena ochilmadi", "message":"Bazaga yozishda xato yoki smena allaqachon ochiq.", **result}, status_code=500)
+                return JSONResponse({"emoji":"❌", "title":"Смена не открылась", "message":"Ошибка записи в базу или смена уже открыта.", **result}, status_code=500)
             shift_id = await db.get_active_shift_row(int(tid))
             try:
                 db._execute("UPDATE attendance_checks SET shift_id=? WHERE id=?", (shift_id, int(result["check_id"])))
             except Exception:
                 pass
             notify_group(action, user.get("name", "Xodim"), result.get("shop") or fallback_shop, result, selfie_path, loc_url)
-            return JSONResponse({"emoji":"✅", "title":"Keldim saqlandi", "message":"Smena ochildi." if result.get("final_status") == "approved" else "Smena ochildi, admin reviewga ham tushdi.", **result})
+            return JSONResponse({"emoji":"✅", "title":"Приход сохранён", "message":"Смена открыта." if result.get("final_status") == "approved" else "Смена открыта, также отправлена на проверку администратору.", **result})
         worked = await db.end_shift(active, photo_id=f"web:{result['check_id']}", location=loc_url)
         notify_group(action, user.get("name", "Xodim"), result.get("shop") or fallback_shop, result, selfie_path, loc_url, worked)
-        return JSONResponse({"emoji":"✅", "title":"Ketdim saqlandi", "message":f"Smena yopildi. Ishladi: {worked}", **result})
+        return JSONResponse({"emoji":"✅", "title":"Уход сохранён", "message":f"Смена закрыта. Отработал: {worked}", **result})
 
     @app.get("/verification", response_class=HTMLResponse)
     async def verification(request: Request):
@@ -1096,7 +1254,7 @@ def apply_stable_patch(app) -> None:
           <select class="select" name="role">{role_options(u['role'])}</select>
           <div><b>Filiallar</b>{shop_checkbox_html(selected)}</div>
           <button class="btn">Saqlash</button>
-        </form><form method="post" action="/employees/{esc(telegram_id)}/delete" style="margin-top:12px"><button class="btn danger" onclick="return confirm('Xodimni deaktivatsiya qilamizmi?')">Deaktivatsiya</button></form></div>
+        </form><form method="post" action="/employees/{esc(telegram_id)}/delete" style="margin-top:12px"><button class="btn danger" onclick="return confirm('Деактивировать сотрудника?')">Deaktivatsiya</button></form></div>
         """
         stat = f"<div class='card'><h2>Bu oy</h2><div class='grid cards'><div class='card metric'><div class='label'>Real</div><div class='value'>{round(raw_total/60,1)}</div></div><div class='card metric'><div class='label'>Yozilgan</div><div class='value'>{round(paid_total/60,1)}</div></div><div class='card metric'><div class='label'>Oylik</div><div class='value'>{money(paid_total/60*float(u['hourly_rate'] or 0))}</div></div></div>{ws.table(['Sana','Shop','Keldi','Ketdi','Real/Yozildi'], rows, 5)}</div>"
         return stable_layout(request, "employees", "Xodim profili", u["full_name"], f"<div class='two'>{form}{stat}</div>")
@@ -1203,7 +1361,7 @@ def apply_stable_patch(app) -> None:
         rows = ""
         total_sum = total_paid = total_raw = 0
         for u in users:
-            q = "SELECT * FROM shifts WHERE company_id=? AND telegram_id=? AND business_date BETWEEN ? AND ? AND status='closed'"
+            q = "SELECT * FROM shifts WHERE company_id=? AND telegram_id=? AND business_date BETWEEN ? AND ? AND status IN ('closed','open')"
             params = [db._current_cid(), str(u["telegram_id"]), start.isoformat(), end.isoformat()]
             if shop:
                 q += " AND shop=?"

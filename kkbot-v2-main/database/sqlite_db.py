@@ -93,7 +93,9 @@ def _legacy_paid_minutes_from_total(total_minutes: int) -> tuple[int, int]:
 
 
 def _legacy_paid_minutes_between(start_at: datetime, end_at: datetime) -> tuple[int, int, int]:
-    raw_minutes = max(0, int((end_at - start_at).total_seconds() // 60))
+    start = _to_local_naive(start_at) or start_at.replace(tzinfo=None)
+    end = _to_local_naive(end_at) or end_at.replace(tzinfo=None)
+    raw_minutes = max(0, int((end - start).total_seconds() // 60))
     paid_minutes, break_minutes = _legacy_paid_minutes_from_total(raw_minutes)
     return raw_minutes, paid_minutes, break_minutes
 
@@ -127,6 +129,51 @@ def _hours_from_worked(worked: str, start: str = "", end: str = "") -> float:
         except Exception:
             pass
     return _hours_between(start, end)
+
+
+
+
+def _to_local_naive(value: Any) -> Optional[datetime]:
+    """Parse DB datetime and return local timezone-naive datetime.
+
+    The database can contain mixed values: with timezone (+05:00) and without
+    timezone. Salary/live calculations must always subtract the same type.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        if isinstance(value, datetime):
+            dt = value
+        else:
+            text = str(value).strip()
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            dt = datetime.fromisoformat(text)
+        tz = config.get_timezone_obj()
+        if dt.tzinfo is not None:
+            try:
+                dt = dt.astimezone(tz)
+            except Exception:
+                pass
+        return dt.replace(tzinfo=None)
+    except Exception:
+        return None
+
+
+def _now_local_naive() -> datetime:
+    return datetime.now(config.get_timezone_obj()).replace(tzinfo=None)
+
+
+def _local_epoch_seconds(value: Any) -> int:
+    dt = _to_local_naive(value)
+    if not dt:
+        return 0
+    tz = config.get_timezone_obj()
+    try:
+        aware = tz.localize(dt) if getattr(dt, "tzinfo", None) is None and hasattr(tz, "localize") else dt.replace(tzinfo=tz)
+        return int(aware.timestamp())
+    except Exception:
+        return int(dt.timestamp())
 
 
 def _status_from_schedule(start_value: str) -> Optional[str]:
@@ -717,10 +764,11 @@ class AsyncSQLiteDB:
             if not row:
                 return "Error"
             now = self._now()
-            start_at = datetime.fromisoformat(row["start_at"])
-            if start_at.tzinfo is None and now.tzinfo is not None:
-                start_at = config.get_timezone_obj().localize(start_at) if hasattr(config.get_timezone_obj(), "localize") else start_at.replace(tzinfo=now.tzinfo)
-            raw_minutes, worked_minutes, break_minutes = _legacy_paid_minutes_between(start_at, now)
+            start_at = _to_local_naive(row["start_at"])
+            now_local = _to_local_naive(now) or _now_local_naive()
+            if not start_at:
+                return "Error"
+            raw_minutes, worked_minutes, break_minutes = _legacy_paid_minutes_between(start_at, now_local)
             self._execute(
                 """
                 UPDATE shifts
@@ -741,10 +789,26 @@ class AsyncSQLiteDB:
         return self._shift_record(row) if row else None
 
     def _shift_record(self, r: sqlite3.Row) -> dict:
-        start_at = datetime.fromisoformat(r["start_at"])
-        end_at = datetime.fromisoformat(r["end_at"]) if r["end_at"] else None
+        start_at = _to_local_naive(r["start_at"]) or datetime.fromisoformat(str(r["start_at"]).split("+")[0])
+        end_at = _to_local_naive(r["end_at"]) if r["end_at"] else None
         d = _parse_date(r["business_date"]) or start_at.date()
-        worked = _format_minutes(r["worked_minutes"] or 0) if r["end_at"] else ""
+        live_raw_minutes = 0
+        live_paid_minutes = 0
+        live_break_minutes = 0
+        if r["end_at"]:
+            worked = _format_minutes(r["worked_minutes"] or 0)
+            worked_minutes = int(r["worked_minutes"] or 0)
+            break_minutes = int(r["break_minutes"] or 0)
+        elif str(r["status"] or "") == "open":
+            live_raw_minutes = max(0, int((_now_local_naive() - start_at).total_seconds() // 60))
+            live_paid_minutes, live_break_minutes = _legacy_paid_minutes_from_total(live_raw_minutes)
+            worked = _format_minutes(live_paid_minutes)
+            worked_minutes = live_paid_minutes
+            break_minutes = live_break_minutes
+        else:
+            worked = ""
+            worked_minutes = int(r["worked_minutes"] or 0)
+            break_minutes = int(r["break_minutes"] or 0)
         return {
             "row": int(r["id"]),
             "date": d,
@@ -757,11 +821,14 @@ class AsyncSQLiteDB:
             "photo_id": r["start_photo_id"] or "",
             "location": r["start_location"] or "",
             "status": r["status"],
-            "worked_minutes": int(r["worked_minutes"] or 0),
-            "break_minutes": int(r["break_minutes"] or 0),
+            "worked_minutes": worked_minutes,
+            "break_minutes": break_minutes,
             "late_minutes": int(r["late_minutes"] or 0),
             "start_at": r["start_at"],
             "end_at": r["end_at"] or "",
+            "live_raw_minutes": live_raw_minutes,
+            "live_paid_minutes": live_paid_minutes,
+            "start_ts": _local_epoch_seconds(r["start_at"]),
         }
 
     async def get_shift_rows(self, telegram_id: int | str | None = None, start_date: date | None = None, end_date: date | None = None) -> List[dict]:
@@ -785,13 +852,13 @@ class AsyncSQLiteDB:
         if int(col) == 6:
             shift = await self.get_shift_by_id(row)
             if shift:
-                start_at = datetime.fromisoformat(shift["start_at"])
+                start_at = _to_local_naive(shift["start_at"]) or datetime.fromisoformat(str(shift["start_at"]).split("+")[0])
                 end_date = start_at.date()
                 try:
                     if _time_to_minutes(value) < _time_to_minutes(shift["start"]):
                         end_date = end_date + timedelta(days=1)
                     end_dt = datetime.combine(end_date, datetime.strptime(value, "%H:%M").time())
-                    raw, paid, br = _legacy_paid_minutes_between(start_at.replace(tzinfo=None), end_dt)
+                    raw, paid, br = _legacy_paid_minutes_between(start_at, end_dt)
                     self._execute("UPDATE shifts SET end_at=?, status='closed', worked_minutes=?, break_minutes=? WHERE id=?", (end_dt.isoformat(), paid, br, row))
                 except Exception:
                     pass
@@ -945,18 +1012,20 @@ class AsyncSQLiteDB:
         longest_shift = 0.0
         busiest_shop: dict[str, float] = {}
         live_minutes = 0
+        live_paid_minutes = 0
         today = self._now().date()
         now = self._now()
 
         for row in shifts:
             worked_days.add(row["date"])
             if row.get("status") == "open" and not row.get("end"):
-                if start_date <= today <= end_date:
-                    start_at = datetime.fromisoformat(row["start_at"])
-                    if start_at.tzinfo is None and now.tzinfo:
-                        start_at = config.get_timezone_obj().localize(start_at) if hasattr(config.get_timezone_obj(), "localize") else start_at.replace(tzinfo=now.tzinfo)
-                    live_minutes = max(live_minutes, int((now - start_at).total_seconds() // 60))
-                hours = 0.0
+                start_at = _to_local_naive(row.get("start_at"))
+                now_local = _to_local_naive(now) or _now_local_naive()
+                live_raw = max(0, int((now_local - start_at).total_seconds() // 60)) if start_at else 0
+                paid_live, _break_live = _legacy_paid_minutes_from_total(live_raw)
+                live_minutes = max(live_minutes, live_raw)
+                live_paid_minutes = max(live_paid_minutes, paid_live)
+                hours = paid_live / 60
             else:
                 hours = _hours_from_worked(row.get("worked", ""), row.get("start", ""), row.get("end", ""))
             total_hours += hours
@@ -994,7 +1063,7 @@ class AsyncSQLiteDB:
             "busiest_shop_hours": round(busiest_shop[max(busiest_shop, key=busiest_shop.get)], 2) if busiest_shop else 0.0,
             "projected_hours": round(projected_hours, 2),
             "projected_earnings": _money(projected_earnings),
-            "live_earning": _money((live_minutes / 60) * rate),
+            "live_earning": _money((live_paid_minutes / 60) * rate),
             "live_minutes": live_minutes,
         }
 
@@ -1027,10 +1096,9 @@ class AsyncSQLiteDB:
         if not shift:
             return {"active": False}
         now = self._now()
-        start_at = datetime.fromisoformat(shift["start_at"])
-        if start_at.tzinfo is None and now.tzinfo:
-            start_at = config.get_timezone_obj().localize(start_at) if hasattr(config.get_timezone_obj(), "localize") else start_at.replace(tzinfo=now.tzinfo)
-        minutes = max(0, int((now - start_at).total_seconds() // 60))
+        start_at = _to_local_naive(shift["start_at"])
+        now_local = _to_local_naive(now) or _now_local_naive()
+        minutes = max(0, int((now_local - start_at).total_seconds() // 60)) if start_at else 0
         paid_live, break_m = _legacy_paid_minutes_from_total(minutes)
         earned = (paid_live / 60) * rate
         projected = earned
