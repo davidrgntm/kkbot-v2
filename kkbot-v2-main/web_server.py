@@ -103,7 +103,11 @@ def legacy_paid_minutes_from_total(raw_minutes: int) -> tuple[int, int]:
 
 
 def legacy_paid_minutes(start_at: datetime, end_at: datetime) -> tuple[int, int, int]:
-    raw = max(0, int((end_at - start_at).total_seconds() // 60))
+    # Always subtract the same type of datetimes. Old DB rows may contain
+    # values with timezone (+05:00), while manually added rows are often naive.
+    start = _dt(start_at) or start_at.replace(tzinfo=None)
+    end = _dt(end_at) or end_at.replace(tzinfo=None)
+    raw = max(0, int((end - start).total_seconds() // 60))
     paid, br = legacy_paid_minutes_from_total(raw)
     return raw, paid, br
 
@@ -401,18 +405,37 @@ async def root(request: Request):
 # -----------------------------
 # Live dashboard helpers
 # -----------------------------
-def _dt(value: str | None) -> Optional[datetime]:
-    if not value:
+def _dt(value: Any) -> Optional[datetime]:
+    """Parse any DB/API datetime into local naive datetime.
+
+    Railway/server rows can be mixed: some timestamps are stored as
+    `2026-06-29T10:00:00+05:00` and some as `2026-06-29T10:00:00`.
+    Python cannot subtract aware and naive datetimes, so every dashboard
+    calculation must normalize them first.
+    """
+    if value is None or value == "":
         return None
     try:
-        return datetime.fromisoformat(str(value)).replace(tzinfo=None)
+        if isinstance(value, datetime):
+            dt = value
+        else:
+            text = str(value).strip()
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            dt = datetime.fromisoformat(text)
+        if dt.tzinfo is not None:
+            try:
+                dt = dt.astimezone(config.get_timezone_obj())
+            except Exception:
+                pass
+        return dt.replace(tzinfo=None)
     except Exception:
         return None
 
 
 def _raw_minutes_for_row(r: Any, end_at: Optional[datetime] = None) -> int:
     start = _dt(r["start_at"])
-    end = end_at or _dt(r["end_at"])
+    end = _dt(end_at) if end_at is not None else _dt(r["end_at"])
     if not start or not end:
         return 0
     return max(0, int((end - start).total_seconds() // 60))
